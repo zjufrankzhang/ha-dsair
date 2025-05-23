@@ -33,8 +33,8 @@ _MODE_NAME_LIST = [
 ]
 
 
-def get_mode_name(idx: int) -> HVACMode:
-    return _MODE_NAME_LIST[idx]
+def get_mode_name(idx: EnumControl.Mode | None) -> HVACMode | None:
+    return _MODE_NAME_LIST[idx] if idx is not None else None
 
 
 _MODE_ACTION_LIST = [
@@ -51,15 +51,15 @@ _MODE_ACTION_LIST = [
 ]
 
 
-def get_action_name(idx: int) -> HVACAction | None:
-    return _MODE_ACTION_LIST[idx]
+def get_action_name(idx: EnumControl.Mode | None) -> HVACAction | None:
+    return _MODE_ACTION_LIST[idx] if idx is not None else None
 
 
 AIR_FLOW_NAME_LIST = [FAN_LOW, "稍弱", FAN_MEDIUM, "稍强", FAN_HIGH, FAN_AUTO]
 
 
-def get_air_flow_name(idx: int) -> str:
-    return AIR_FLOW_NAME_LIST[idx]
+def get_air_flow_name(idx: EnumControl.AirFlow | None) -> str | None:
+    return AIR_FLOW_NAME_LIST[idx] if idx is not None else None
 
 
 def get_air_flow_enum(name: str) -> EnumControl.AirFlow:
@@ -69,8 +69,8 @@ def get_air_flow_enum(name: str) -> EnumControl.AirFlow:
 FAN_DIRECTION_LIST = [None, "➡️", "↘️", "⬇️", "↙️", "⬅️", "↔️", "🔄"]
 
 
-def get_fan_direction_name(idx: int) -> str:
-    return FAN_DIRECTION_LIST[idx]
+def get_fan_direction_name(idx: EnumControl.FanDirection | None) -> str | None:
+    return FAN_DIRECTION_LIST[idx] if idx is not None else None
 
 
 def get_fan_direction_enum(name: str) -> EnumControl.FanDirection:
