@@ -107,6 +107,8 @@ def result_factory(data: tuple, config: Config):
             result = ScheduleQueryVersionV3Result(cnt, EnumDevice.SYSTEM)
         elif cmd_type == EnumCmdType.SENSOR2_INFO:
             result = Sensor2InfoResult(cnt, EnumDevice.SYSTEM)
+        elif cmd_type == EnumCmdType.SYS_FILTER_CLEAN_SIGN.value:
+            result = FilterCleanSignResult(cnt, EnumDevice.SYSTEM)
         else:
             result = UnknownResult(cnt, EnumDevice.SYSTEM, cmd_type)
     elif dev_id in (
@@ -328,6 +330,56 @@ class Sensor2InfoResult(BaseResult):
     @property
     def sensors(self):
         return self._sensors
+
+
+class FilterCleanSignResult(BaseResult):
+    def __init__(self, cmd_id: int, target: EnumDevice):
+        BaseResult.__init__(self, cmd_id, target, EnumCmdType.SYS_FILTER_CLEAN_SIGN)
+        self._device_type: EnumDevice = None
+        self._room_id: int = 0
+        self._filter_status: int = 0
+
+    def load_bytes(self, b: bytes, config: Config) -> None:
+        if len(b) == 7:
+            # 前4个字节是设备类型（小端序int值）
+            device_value = struct.unpack("<I", b[0:4])[0]
+
+            # 根据设备值匹配EnumDevice类型
+            device_map = {
+                18: EnumDevice.AIRCON,
+                19: EnumDevice.GEOTHERMIC,
+                20: EnumDevice.VENTILATION,
+                22: EnumDevice.HD,
+                23: EnumDevice.NEWAIRCON,
+                24: EnumDevice.BATHROOM,
+                25: EnumDevice.SENSOR,
+                28: EnumDevice.SMALL_VAM,
+                50: EnumDevice.HUMIDIFIER,
+            }
+
+            if device_value in device_map:
+                self._device_type = device_map[device_value]
+            else:
+                self._device_type = None
+                _LOGGER.debug(f"[FilterCleanSignResult] 无法匹配设备类型: 值={device_value}, 可用值={list(device_map.keys())}")
+            
+            self._room_id = b[4]
+            # b[5] 是未知字节，跳过
+            self._filter_status = b[6]
+        else:
+            _LOGGER.debug(f"[FilterCleanSignResult] 解析滤芯数据时出错: {b}")
+
+    @property
+    def room_id(self):
+        return self._room_id
+
+    @property
+    def device_type(self):
+        return self._device_type
+
+    @property
+    def filter_status(self):
+        return self._filter_status
 
 
 class CmdRspResult(BaseResult):
