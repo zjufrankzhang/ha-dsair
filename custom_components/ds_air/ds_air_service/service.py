@@ -18,6 +18,9 @@ from .param import (
     HeartbeatParam,
     Param,
     Sensor2InfoParam,
+    HDQueryStatusParam,
+    HDQueryInfoParam,
+    HDBaseControlParam,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -158,10 +161,12 @@ class Service:
         self._aircons: list[AirCon] = None
         self._new_aircons: list[AirCon] = None
         self._bathrooms: list[AirCon] = None
+        self._hds: list[HD] = None  # 添加HD设备列表初始化
         self._ready: bool = False
         self._none_stat_dev_cnt: int = 0
         self._status_hook: list[(AirCon, Callable)] = []
         self._sensor_hook: list[(str, Callable)] = []
+        self._hd_hook: list[(HD, Callable)] = []  # 添加HD状态钩子初始化
         self._heartbeat_thread = None
         self._sensors: list[Sensor] = []
         self._scan_interval: int = 5
@@ -175,32 +180,108 @@ class Service:
         self._socket_client.send(HandShakeParam())
         self._heartbeat_thread = HeartBeatThread(self)
         self._heartbeat_thread.start()
-        while (
-            self._rooms is None
-            or self._aircons is None
-            or self._new_aircons is None
-            or self._bathrooms is None
-        ):
+        
+        # 添加超时机制避免无限等待
+        timeout = 60  # 60秒超时
+        elapsed = 0
+        
+        # 分别检查各个设备类型的初始化状态
+        aircon_initialized = False
+        new_aircon_initialized = False
+        bathroom_initialized = False
+        rooms_initialized = False
+        hd_initialized = False  # 添加HD设备初始化标志
+        
+        while elapsed < timeout:
+            # 检查房间信息是否已获取
+            if not rooms_initialized and self._rooms is not None:
+                rooms_initialized = True
+                _LOGGER.info("[Service] 房间信息初始化完成")
+            
+            # 检查传统空调是否已获取
+            if not aircon_initialized and self._aircons is not None:
+                aircon_initialized = True
+                _LOGGER.info("[Service] 传统空调设备初始化完成")
+            
+            # 检查新风空调是否已获取
+            if not new_aircon_initialized and self._new_aircons is not None:
+                new_aircon_initialized = True
+                _LOGGER.info("[Service] 新风空调设备初始化完成")
+            
+            # 检查浴室空调是否已获取
+            if not bathroom_initialized and self._bathrooms is not None:
+                bathroom_initialized = True
+                _LOGGER.info("[Service] 浴室空调设备初始化完成")
+            
+            # 检查HD设备是否已获取
+            if not hd_initialized and self._hds is not None:
+                hd_initialized = True
+                _LOGGER.info("[Service] HD设备初始化完成")
+            
+            # 如果关键设备都已初始化，则退出等待
+            if rooms_initialized and (aircon_initialized or new_aircon_initialized or bathroom_initialized):
+                _LOGGER.info("[Service] 房间及空调信息初始化完成，准备就绪")
+                break
+                
             time.sleep(1)
-        for i in self._aircons:
-            for j in self._rooms:
-                if i.room_id == j.id:
-                    i.alias = j.alias
-                    if i.unit_id:
-                        i.alias += str(i.unit_id)
-        for i in self._new_aircons:
-            for j in self._rooms:
-                if i.room_id == j.id:
-                    i.alias = j.alias
-                    if i.unit_id:
-                        i.alias += str(i.unit_id)
-        for i in self._bathrooms:
-            for j in self._rooms:
-                if i.room_id == j.id:
-                    i.alias = j.alias
-                    if i.unit_id:
-                        i.alias += str(i.unit_id)
+            elapsed += 1
+            
+        # 超时处理
+        if elapsed >= timeout:
+            _LOGGER.warning("[Service] 设备初始化超时，使用默认空列表继续")
+            if self._rooms is None:
+                self._rooms = []
+                _LOGGER.warning("[Service] 房间信息初始化超时，使用空列表")
+            if self._aircons is None:
+                self._aircons = []
+                _LOGGER.warning("[Service] 传统空调初始化超时，使用空列表")
+            if self._new_aircons is None:
+                self._new_aircons = []
+                _LOGGER.warning("[Service] 新风空调初始化超时，使用空列表")
+            if self._bathrooms is None:
+                self._bathrooms = []
+                _LOGGER.warning("[Service] 浴室空调初始化超时，使用空列表")
+        
+        if self._hds is None:
+            self._hds = []
+            _LOGGER.info("[Service] HD设备列表初始化完成（空列表）")
+        
+        # 安全地设置设备别名，添加空值检查
+        try:
+            if self._aircons is not None:
+                for i in self._aircons:
+                    for j in self._rooms:
+                        if i.room_id == j.id:
+                            i.alias = j.alias
+                            if i.unit_id:
+                                i.alias += str(i.unit_id)
+            if self._new_aircons is not None:
+                for i in self._new_aircons:
+                    for j in self._rooms:
+                        if i.room_id == j.id:
+                            i.alias = j.alias
+                            if i.unit_id:
+                                i.alias += str(i.unit_id)
+            if self._bathrooms is not None:
+                for i in self._bathrooms:
+                    for j in self._rooms:
+                        if i.room_id == j.id:
+                            i.alias = j.alias
+                            if i.unit_id:
+                                i.alias += str(i.unit_id)
+            if self._hds is not None:
+                for i in self._hds:
+                    for j in self._rooms:
+                        if i.room_id == j.id:
+                            i.alias = j.alias
+                            if i.unit_id:
+                                i.alias += str(i.unit_id)
+        except Exception as e:
+            _LOGGER.error(f"[Service] 设置设备别名时出错: {e}")
+        
+        #_log(f"[HD] 初始化完成，共发现 {len(self._hds)} 个HD设备")        
         self._ready = True
+        _log("[Service] 服务初始化完成")
 
     def destroy(self) -> None:
         if self._ready:
@@ -211,9 +292,11 @@ class Service:
             self._aircons = None
             self._new_aircons = None
             self._bathrooms = None
+            self._hds = None  # 清理HD设备
             self._none_stat_dev_cnt = 0
             self._status_hook = []
             self._sensor_hook = []
+            self._hd_hook = []  # 清理HD钩子
             self._heartbeat_thread = None
             self._sensors = []
             self._ready = False
@@ -228,8 +311,18 @@ class Service:
             aircons += self._bathrooms
         return aircons
 
+    def get_hds(self) -> list[HD]:
+        """获取所有HD设备"""
+        return self._hds if self._hds is not None else []
+
     def control(self, aircon: AirCon, status: AirConStatus):
         p = AirConControlParam(aircon, status)
+        self.send_msg(p)
+
+    def hd_control(self, hd: HD, status: HDStatus):
+        """控制HD设备"""
+        p = HDBaseControlParam(hd, status)
+        #_LOGGER.debug(f"[Service] 发送HD控制命令: {hd.alias}, status={status}")
         self.send_msg(p)
 
     def register_status_hook(self, device: AirCon, hook: Callable):
@@ -237,6 +330,12 @@ class Service:
 
     def register_sensor_hook(self, unique_id: str, hook: Callable):
         self._sensor_hook.append((unique_id, hook))
+
+    def register_hd_hook(self, device: HD, hook: Callable):
+        """注册HD设备状态钩子"""
+        self._hd_hook.append((device, hook))
+        #_LOGGER.debug(f"[Service] 注册HD钩子: {device.alias}")
+
 
     # ----split line---- above for component, below for inner call
 
@@ -303,13 +402,37 @@ class Service:
                         _log(str(e))
 
     def poll_status(self):
-        for i in self._new_aircons:
-            p = AirConQueryStatusParam()
-            p.target = EnumDevice.NEWAIRCON
-            p.device = i
+        """轮询设备状态"""
+        _log(f"[Service.poll_status] 开始轮询所有设备状态")
+        # 空调设备状态轮询
+        if self._new_aircons:
+            for i in self._new_aircons:
+                try:
+                    p = AirConQueryStatusParam()
+                    p.target = EnumDevice.NEWAIRCON
+                    p.device = i
+                    self.send_msg(p)
+                except Exception as e:
+                    _LOGGER.error(f"[Service.poll_status] 空调状态查询失败: {e}")
+        
+        # HD设备状态轮询
+        if self._hds:
+            
+            for hd in self._hds:
+                try:
+                    p = HDQueryStatusParam()
+                    p.device = hd
+                    self.send_msg(p)
+                except Exception as e:
+                    _LOGGER.error(f"[Service.poll_status] HD状态查询失败, error: {e}")
+            
+        # 传感器信息轮询
+        try:
+            p = Sensor2InfoParam()
             self.send_msg(p)
-        p = Sensor2InfoParam()
-        self.send_msg(p)
+        except Exception as e:
+            _LOGGER.error(f"[Service.poll_status] 传感器状态查询失败: {e}")
+                
 
     def update_aircon(self, target: EnumDevice, room: int, unit: int, **kwargs):
         li = self._status_hook
@@ -325,6 +448,55 @@ class Service:
                 except Exception as e:
                     _log("hook error!!")
                     _log(str(e))
+
+    def update_hd(self, room: int, unit: int, status: HDStatus):
+        """更新HD设备状态"""
+        li = self._hd_hook
+        try:
+            if li is None:
+                _log(f"[Service.update_hd] HD钩子列表为空，跳过状态更新: room={room}, unit={unit}")
+                return
+            
+            for item in li:
+                i, func = item
+                if i.unit_id == unit and i.room_id == room:
+                    func(status = status)
+                    #_LOGGER.debug(f"[Service.update_hd] HD状态更新成功: {i.alias}")
+        except Exception as e:
+            _LOGGER.error(f"[Service.update_hd] HD钩子执行错误: {e}")
+            _LOGGER.error(f"[Service.update_hd] 错误详情: ", exc_info=True)
+
+
+    def set_hds(self, hds: list[HD]):
+        """设置HD设备列表"""
+        #_LOGGER.debug(f"[Service.set_hds] 接收到HD设备列表，数量: {len(hds)}")
+        #for hd in hds:
+            #_LOGGER.debug(f"[Service.set_hds] HD设备详情: room_id={hd.room_id}, unit_id={hd.unit_id}, alias={hd.alias}")
+        self._none_stat_dev_cnt += len(hds)
+        self._hds = hds
+        _LOGGER.debug(f"[Service.set_hds] HD设备设置完成，当前总数: {len(self._hds)}")
+
+    def set_hd_status(self, room: int, unit: int, status: HDStatus):
+        """设置HD设备状态"""
+        try:
+            if self._ready:
+                #_LOGGER.debug(f"[Service.set_hd_status] HD已经初始化完成，使用钩子更新状态: room={room}, unit={unit}")
+                self.update_hd(room, unit, status)
+            else:
+                # 在初始化阶段更新HD设备状态
+                #_LOGGER.debug(f"[Service.set_hd_status] HD尚未初始化，初始化HD状态: room={room}, unit={unit}")
+                if(self._hds is None):
+                    _LOGGER.warning(f"[Service.set_hd_status] _hds 为空")
+                    return
+                for hd in self._hds:
+                    if hd.unit_id == unit and hd.room_id == room:
+                        hd.status = status
+                        self._none_stat_dev_cnt -= 1
+                        #_LOGGER.debug(f"[Service.set_hd_status] 初始化阶段状态更新完成: {hd.alias}")
+                        break
+        except Exception as e:
+            _LOGGER.error(f"[Service.set_hd_status] 设置HD状态时出错: {e}")
+
 
     def get_scan_interval(self):
         return self._scan_interval

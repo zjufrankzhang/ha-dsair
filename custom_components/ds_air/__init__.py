@@ -18,6 +18,8 @@ _LOGGER = logging.getLogger(__name__)
 PLATFORMS = [
     Platform.CLIMATE,
     Platform.SENSOR,
+    Platform.WATER_HEATER,
+    Platform.SWITCH,
 ]
 
 

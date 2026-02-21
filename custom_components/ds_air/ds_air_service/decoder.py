@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import struct
+from logging import getLogger
 from typing import TYPE_CHECKING
 
 from .base_bean import BaseBean
@@ -18,6 +19,7 @@ from .ctrl_enum import (
 )
 from .dao import (
     HD,
+    HDStatus,
     UNINITIALIZED_VALUE,
     AirCon,
     AirConStatus,
@@ -34,7 +36,11 @@ from .param import (
     AirConRecommendedIndoorTempParam,
     GetRoomInfoParam,
     Sensor2InfoParam,
+    HDQueryStatusParam,
+    HDQueryInfoParam,
 )
+
+_LOGGER = getLogger(__name__)
 
 if TYPE_CHECKING:
     from .service import Service
@@ -110,6 +116,7 @@ def result_factory(data: tuple, config: Config):
         elif cmd_type == EnumCmdType.SYS_FILTER_CLEAN_SIGN.value:
             result = FilterCleanSignResult(cnt, EnumDevice.SYSTEM)
         else:
+            _LOGGER.debug(f"[result_factory] 未知系统命令类型: cmd_type={cmd_type}")
             result = UnknownResult(cnt, EnumDevice.SYSTEM, cmd_type)
     elif dev_id in (
         EnumDevice.NEWAIRCON.value[1],
@@ -131,9 +138,24 @@ def result_factory(data: tuple, config: Config):
         elif cmd_type == EnumCmdType.SENSOR2_INFO.value:
             result = Sensor2InfoResult(cnt, device)
         else:
+            _LOGGER.debug(f"[result_factory] 未知设备命令类型: device={device}, cmd_type={cmd_type}")
+            result = UnknownResult(cnt, device, cmd_type)
+    elif dev_id == EnumDevice.HD.value[1]:  # 特别处理HD设备
+        device = EnumDevice.HD
+        if cmd_type == EnumCmdType.HD_INFO_CHANGE.value:
+            result = HDInfoChangeResult(cnt, device)
+        elif cmd_type == EnumCmdType.QUERY_STATUS.value:
+            result = HDQueryStatusResult(cnt, device)
+        elif cmd_type == EnumCmdType.STATUS_CHANGED.value:
+            result = HDStatusChangeResult(cnt, device)
+        elif cmd_type == EnumCmdType.HD_CONTROL_OTHER.value:
+            result = HDControlOtherResult(cnt, device)
+        else:
+            _LOGGER.debug(f"[result_factory] 未知HD命令类型: cmd_type={cmd_type}")
             result = UnknownResult(cnt, device, cmd_type)
     else:
         """ignore other device"""
+        _LOGGER.debug(f"[result_factory] 忽略未知设备: dev_id={dev_id}")
         result = UnknownResult(cnt, EnumDevice.SYSTEM, cmd_type)
 
     result.subbody_ver = subbody_ver
@@ -582,6 +604,7 @@ class GetRoomInfoResult(BaseResult):
         service.set_rooms(self.rooms)
         service.send_msg(AirConRecommendedIndoorTempParam())
         service.set_sensors(self.sensors)
+        service.set_hds(self.hds)  # 添加HD设备注册
 
         aircons = []
         new_aircons = []
@@ -608,6 +631,18 @@ class GetRoomInfoResult(BaseResult):
         p.aircons = bathrooms
         p.target = EnumDevice.BATHROOM
         service.send_msg(p)
+
+        # 查询HD设备状态
+        for hd in service.get_hds():
+            p = HDQueryStatusParam()
+            p.device = hd
+            service.send_msg(p)
+            
+            #HDQueryInfoParam在我的DTA117C611上没有返回，注释掉了
+            #p = HDQueryInfoParam()
+            #p.device = hd
+            #service.send_msg(p)
+        
 
     @property
     def count(self):
@@ -908,6 +943,287 @@ class AirConQueryScenarioSettingResult(BaseResult):
         """Todo"""
 
 
+class HDInfoChangeResult(BaseResult):
+    """HD设备状态变化结果"""
+    def __init__(self, cmd_id: int, target: EnumDevice):
+        BaseResult.__init__(self, cmd_id, target, EnumCmdType.HD_INFO_CHANGE)
+        self._room: int = 0
+        self._unit: int = 0
+        self._status: HDStatus = HDStatus()
+
+    def load_bytes(self, b: bytes, config: Config) -> None:
+        d = Decode(b)
+        self._room = d.read1()
+        self._unit = d.read1() 
+        d.read1()  # skip another byte
+        
+        _LOGGER.debug(f"[HDInfoChangeResult] 解析HD状态变化: room={self._room}, unit={self._unit}")
+        
+        # 读取第一个标志字节
+        flag_byte = d.read1()
+        
+        while flag_byte != 0:
+            field_length = d.read1()
+            
+            if flag_byte == 1:  # 疑似废弃
+                # muteEnable
+                if field_length == 1:
+                    mute_enable_value = d.read1()
+                    self._status.mute_enable = EnumControl.Switch(mute_enable_value)
+                    _LOGGER.debug(f"[HDInfoChangeResult] muteEnable: {mute_enable_value}")
+                else:
+                    d.read(field_length)  # skip unknown length
+                    
+            elif flag_byte == 2:    # 疑似废弃
+                # 温度设置相关字段
+                if field_length == 9:
+                    temperature_set = d.read1()
+                    cold_upper_value = d.read2() / 10.0
+                    cold_lower_value = d.read2() / 10.0
+                    warm_upper_value = d.read2() / 10.0
+                    warm_lower_value = d.read2() / 10.0
+                    
+                    self._status.temperature_set = temperature_set
+                    self._status.cold_upper = cold_upper_value
+                    self._status.cold_lower = cold_lower_value
+                    self._status.warm_upper = warm_upper_value
+                    self._status.warm_lower = warm_lower_value
+                    
+                    _LOGGER.debug(f"[HDInfoChangeResult] 温度设置: set={temperature_set}°C, warm_upper={warm_upper_value}°C, warm_lower={warm_lower_value}°C, cold_upper={cold_upper_value}°C, cold_lower={cold_lower_value}°C")
+                else:
+                    d.read(field_length)  # skip unknown length
+                    
+            elif flag_byte == 33:
+                # switchStatus
+                if field_length == 1:
+                    switch_value = d.read1()
+                    self._status.switch = EnumControl.Switch(switch_value)
+                    _LOGGER.debug(f"[HDInfoChangeResult] 开关状态: {switch_value}")
+                else:
+                    d.read(field_length)  # skip unknown length
+                    
+            elif flag_byte == 34:
+                # mute
+                if field_length == 1:
+                    mute_value = d.read1()
+                    self._status.mute = EnumControl.Switch(mute_value)
+                    _LOGGER.debug(f"[HDInfoChangeResult] 静音状态: {mute_value}")
+                else:
+                    d.read(field_length)  # skip unknown length
+                    
+            elif flag_byte == 35:
+                # warmTemperature
+                if field_length == 2:
+                    warm_temp_value = d.read2() / 10.0
+                    self._status.warm_temperature = warm_temp_value
+                    _LOGGER.debug(f"[HDInfoChangeResult] 热水温度: {warm_temp_value}°C")
+                else:
+                    d.read(field_length)  # skip unknown length
+                    
+            elif flag_byte == 36:
+                # coldTemperature
+                if field_length == 2:
+                    cold_temp_value = d.read2() / 10.0
+                    self._status.cold_temperature = cold_temp_value
+                    _LOGGER.debug(f"[HDInfoChangeResult] 冷水温度: {cold_temp_value}°C")
+                else:
+                    d.read(field_length)  # skip unknown length
+                    
+            elif flag_byte == 37:
+                # switchEnable
+                if field_length == 1:
+                    switch_enable_value = d.read1()
+                    self._status.switch_enable = EnumControl.Switch(switch_enable_value)
+                    _LOGGER.debug(f"[HDInfoChangeResult] 开关使能: {switch_enable_value}")
+                else:
+                    d.read(field_length)  # skip unknown length
+                    
+            elif flag_byte == 38:
+                # warmCold
+                if field_length == 1:
+                    warm_cold_value = d.read1()
+                    self._status.warm_cold = warm_cold_value
+                    _LOGGER.debug(f"[HDInfoChangeResult] 暖冷模式: {warm_cold_value}")
+                else:
+                    d.read(field_length)  # skip unknown length
+                    
+            elif flag_byte == 39:
+                # preheat
+                if field_length == 1:
+                    preheat_value = d.read1()
+                    self._status.preheat = preheat_value
+                    _LOGGER.debug(f"[HDInfoChangeResult] 预热: {preheat_value}")
+                else:
+                    d.read(field_length)  # skip unknown length
+                    
+            elif flag_byte == 40:
+                # 夜间节能模式
+                if field_length == 6:
+                    night_energy_switch = d.read1()
+                    night_energy_reduce_temp = d.read1()
+                    night_energy_start_hour = d.read1()
+                    night_energy_start_minute = d.read1()
+                    night_energy_end_hour = d.read1()
+                    night_energy_end_minute = d.read1()
+                    
+                    self._status.night_energy_switch = EnumControl.Switch(night_energy_switch)
+                    self._status.night_energy_reduce_temp = night_energy_reduce_temp
+                    self._status.night_energy_start_hour = night_energy_start_hour
+                    self._status.night_energy_start_minute = night_energy_start_minute
+                    self._status.night_energy_end_hour = night_energy_end_hour
+                    self._status.night_energy_end_minute = night_energy_end_minute
+                    
+                    _LOGGER.debug(f"[HDInfoChangeResult] 夜间节能: switch={night_energy_switch}, reduce_temp={night_energy_reduce_temp}")
+                else:
+                    d.read(field_length)  # skip unknown length
+                    
+            elif flag_byte == 41:
+                # outdoorTemp
+                if field_length == 2:
+                    outdoor_temp_value = d.read2() / 10.0
+                    self._status.outdoor_temp = outdoor_temp_value
+                    _LOGGER.debug(f"[HDInfoChangeResult] 室外温度: {outdoor_temp_value}°C")
+                else:
+                    d.read(field_length)  # skip unknown length
+                    
+            else:
+                # 未知字段，跳过
+                d.read(field_length)
+                _LOGGER.debug(f"[HDInfoChangeResult] 跳过未知字段: flag={flag_byte}, length={field_length}")
+            
+            # 读取下一个标志字节
+            if d._pos < len(b):
+                flag_byte = d.read1()
+            else:
+                break
+
+    def do(self, service: Service) -> None:
+        _LOGGER.debug(f"[HDInfoChangeResult] 执行HD状态更新: room={self._room}, unit={self._unit}")
+        service.set_hd_status(self._room, self._unit, self._status)
+
+
+class HDControlOtherResult(BaseResult):
+    """HD设备其它控制命令返回值，在当前的大金APP包内，只有夜间节能的回调功能"""
+    def __init__(self, cmd_id: int, target: EnumDevice):
+        BaseResult.__init__(self, cmd_id, target, EnumCmdType.HD_CONTROL_OTHER)
+        self._room: int = 0
+        self._unit: int = 0
+        self._status: HDStatus = HDStatus()
+
+    def load_bytes(self, b: bytes, config: Config) -> None:
+        d = Decode(b)
+        self._room = d.read1()
+        self._unit = d.read1()
+        d.read1()   # 保留字段，忽略
+
+        _LOGGER.debug(f"[HDControlOtherResult] 解析其它命令返回值: room={self._room}, unit={self._unit}")
+        
+        flag_byte = d.read1()
+        
+        while flag_byte != 0:
+            field_length = d.read1()
+            
+            if flag_byte == 39:  # 夜间节能相关参数
+                if field_length == 6:
+                    night_energy_switch = d.read1()
+                    self._status.night_energy_switch = EnumControl.Switch(night_energy_switch)
+                    night_energy_reduce_temp_orig = d.read1()
+                    self._status.night_energy_reduce_temp = night_energy_reduce_temp_orig / 10.0
+                    self._status.night_energy_start_hour = d.read1()
+                    self._status.night_energy_start_minute = d.read1()
+                    self._status.night_energy_end_hour = d.read1()
+                    self._status.night_energy_end_minute = d.read1()
+                    _LOGGER.debug(f"[HDControlOtherResult] 夜间节能参数: switch={night_energy_switch}, reduce_temp={self._status.night_energy_reduce_temp}, start_hour={self._status.night_energy_start_hour}, start_minute={self._status.night_energy_start_minute}, end_hour={self._status.night_energy_end_hour}, end_minute={self._status.night_energy_end_minute}")
+                else:
+                    d.read(field_length)  # skip unknown length
+                    _LOGGER.debug(f"[HDControlOtherResult] 数据长度错误：flag_byte={flag_byte}, length={field_length}")
+            else:
+                # 未知字段，跳过
+                d.read(field_length)
+                _LOGGER.debug(f"[HDControlOtherResult] 跳过未知字段: flag_byte={flag_byte}, length={field_length}")
+            
+            # 读取下一个标志字节
+            if d._pos < len(b):
+                flag_byte = d.read1()
+            else:
+                break
+
+    def do(self, service: Service) -> None:
+        _LOGGER.debug(f"[HDControlOtherResult] 执行HD状态查询结果: room={self._room}, unit={self._unit}")
+        try:
+            service.set_hd_status(self._room, self._unit, self._status)
+        except Exception as e:
+            _LOGGER.error(f"[HDControlOtherResult] 设置HD状态时出错: {e}")
+
+
+class HDQueryStatusResult(BaseResult):
+    """HD设备状态查询结果，这是旧版的主动查询，只能返回开关状态，其它一概没有"""
+    def __init__(self, cmd_id: int, target: EnumDevice):
+        BaseResult.__init__(self, cmd_id, target, EnumCmdType.QUERY_STATUS)
+        self._room: int = 0
+        self._unit: int = 0
+        self._status: HDStatus = HDStatus()
+
+    def load_bytes(self, b: bytes, config: Config) -> None:
+        d = Decode(b)
+        self._room = d.read1()
+        self._unit = d.read1()
+        
+        # 解析状态标志位
+        flag = d.read1()
+        
+        _LOGGER.debug(f"[HDQueryStatusResult] 解析HD查询状态: room={self._room}, unit={self._unit}, flag=0x{flag:02x}")
+        
+        try:
+            if flag & EnumControl.Type.SWITCH:
+                switch_value = d.read1()
+                self._status.switch = EnumControl.Switch(switch_value)
+                #_LOGGER.debug(f"[HDQueryStatusResult] 开关状态: {switch_value}")
+        except Exception as e:
+            _LOGGER.error(f"[HDQueryStatusResult] 解析状态数据时出错: {e}")
+
+    def do(self, service: Service) -> None:
+        #_LOGGER.debug(f"[HDQueryStatusResult] 执行HD状态查询结果: room={self._room}, unit={self._unit}")
+        try:
+            service.set_hd_status(self._room, self._unit, self._status)
+        except Exception as e:
+            _LOGGER.error(f"[HDQueryStatusResult] 设置HD状态时出错: {e}")
+
+
+class HDStatusChangeResult(BaseResult):
+    """HD设备状态变化通知（旧版），目前已废弃，请使用HDInfoChangeResult，本类只做处理和解析，没有动作"""
+    """数据格式和HDQueryStatusResult一致，都是只有开关信息，其它什么都没有"""
+    def __init__(self, cmd_id: int, target: EnumDevice):
+        BaseResult.__init__(self, cmd_id, target, EnumCmdType.STATUS_CHANGED)
+        self._room: int = 0
+        self._unit: int = 0
+        self._status: HDStatus = HDStatus()
+
+    def load_bytes(self, b: bytes, config: Config) -> None:
+        d = Decode(b)
+        self._room = d.read1()
+        self._unit = d.read1()
+        
+        # 解析状态标志位
+        flag = d.read1()
+        _LOGGER.debug(f"[HDStatusChangeResult] 解析旧版HD状态变化结果: room={self._room}, unit={self._unit}, flag=0x{flag:02x}")
+        
+        try:
+            if flag & EnumControl.Type.SWITCH:
+                switch_value = d.read1()
+                self._status.switch = EnumControl.Switch(switch_value)
+                #_LOGGER.debug(f"[HDStatusChangeResult] 开关状态: {switch_value}")
+        except Exception as e:
+            _LOGGER.error(f"[HDStatusChangeResult] 解析状态数据时出错: {e}")
+
+    #def do(self, service: Service) -> None:
+    #    _LOGGER.debug(f"[HDStatusChangeResult] 执行HD状态查询结果: room={self._room}, unit={self._unit}")
+    #    try:
+    #        service.set_hd_status(self._room, self._unit, self._status)
+    #    except Exception as e:
+    #        _LOGGER.error(f"[HDStatusChangeResult] 设置HD状态时出错: {e}")
+    
+    
 class UnknownResult(BaseResult):
     def __init__(self, cmd_id: int, target: EnumDevice, cmd_type: EnumCmdType):
         BaseResult.__init__(self, cmd_id, target, cmd_type)

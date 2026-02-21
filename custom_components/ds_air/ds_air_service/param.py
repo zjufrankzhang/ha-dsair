@@ -9,7 +9,7 @@ from .ctrl_enum import (
     EnumFanDirection,
     EnumFanVolume,
 )
-from .dao import AirCon, AirConStatus, get_device_by_aircon
+from .dao import AirCon, AirConStatus, get_device_by_aircon, HD, HDStatus
 
 
 class Encode:
@@ -241,6 +241,88 @@ class AirConControlParam(AirconParam):
                     if status.humidity is not None:
                         flag = flag | EnumControl.Type.HUMIDITY
                         li.append((1, status.humidity))
+        s.write1(flag)
+        for bit, val in li:
+            if bit == 1:
+                s.write1(val)
+            elif bit == 2:
+                s.write2(val)
+
+
+class HDParam(Param):
+    def __init__(self, cmd_type, has_result):
+        Param.__init__(self, EnumDevice.HD, cmd_type, has_result)
+
+#这个是旧的DS-AIR的类，只能返回开关值，没有其它信息产生
+class HDQueryStatusParam(HDParam):
+    def __init__(self):
+        super().__init__(EnumCmdType.QUERY_STATUS, True)
+        self._device: HD | None = None
+
+    def generate_subbody(self, s: Encode, config: Config) -> None:
+        if self._device is not None:
+            s.write1(self._device.room_id)
+            s.write1(self._device.unit_id)
+            s.write1(1)
+
+    @property
+    def device(self):
+        return self._device
+
+    @device.setter
+    def device(self, value: HD):
+        self._device = value
+
+
+#这个请求在反解的包中是没有任何subbody的，但是无论是否加入subbody，都没有返回响应。
+#抓包也无法抓到APP产生过这个请求，疑似状态初始化的工作是由网络侧进行的，后续的状态调整等操作是本地请求。
+#这个类暂时先不删除，未来进一步调试吧
+class HDQueryInfoParam(HDParam):
+    def __init__(self):
+        super().__init__(EnumCmdType.HD_INFO_QUERY, True)
+        self._device: HD | None = None
+        self.subbody_ver = 0
+        self.test_mode = test_mode  # 0-6: 7种测试模式
+
+    def generate_subbody(self, s: Encode, config: Config) -> None:
+        if self._device is not None:
+            s.write1(self._device.room_id)
+            s.write1(self._device.unit_id)
+
+    @property
+    def device(self):
+        return self._device
+
+    @device.setter
+    def device(self, value: HD):
+        self._device = value
+
+
+class HDBaseControlParam(HDParam):
+    def __init__(self, hd: HD, new_status: HDStatus):
+        super().__init__(EnumCmdType.HD_CONTROL_BASE, False)
+        self._hd = hd
+        self._new_status = new_status
+
+    def generate_subbody(self, s: Encode, config: Config) -> None:
+        hd = self._hd
+        status = self._new_status
+        s.write1(hd.room_id)
+        s.write1(hd.unit_id)
+        
+        li = []
+        flag = 0
+        if status.switch is not None:
+            li.append((1, status.switch.value))
+            flag |= 1
+        if status.mute is not None:
+            li.append((1, status.mute.value))
+            flag |= 2
+        if status.warm_temperature is not None:
+            temp_value = int(status.warm_temperature * 10)
+            li.append((2, temp_value))
+            flag |= 16
+            
         s.write1(flag)
         for bit, val in li:
             if bit == 1:
