@@ -633,15 +633,17 @@ class GetRoomInfoResult(BaseResult):
         service.send_msg(p)
 
         # 查询HD设备状态
-        for hd in service.get_hds():
-            p = HDQueryStatusParam()
-            p.device = hd
-            service.send_msg(p)
-            
-            #HDQueryInfoParam在我的DTA117C611上没有返回，注释掉了
-            #p = HDQueryInfoParam()
-            #p.device = hd
-            #service.send_msg(p)
+        hds = service.get_hds()
+        if hds:  # 只有 hds 不为 None 且不为空列表时才执行
+            for hd in hds:
+                p = HDQueryStatusParam()
+                p.device = hd
+                service.send_msg(p)
+                
+                #HDQueryInfoParam在我的DTA117C611上没有返回，注释掉了
+                #p = HDQueryInfoParam()
+                #p.device = hd
+                #service.send_msg(p)
         
 
     @property

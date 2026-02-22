@@ -219,8 +219,14 @@ class Service:
                 _LOGGER.info("[Service] HD设备初始化完成")
             
             # 如果关键设备都已初始化，则退出等待
-            if rooms_initialized and (aircon_initialized or new_aircon_initialized or bathroom_initialized):
-                _LOGGER.info("[Service] 房间及空调信息初始化完成，准备就绪")
+            if (
+                rooms_initialized 
+                and aircon_initialized 
+                and new_aircon_initialized 
+                and bathroom_initialized
+                and hd_initialized
+            ):
+                _LOGGER.info("[Service] 房间及所有设备信息初始化完成，准备就绪")
                 break
                 
             time.sleep(1)
@@ -228,7 +234,7 @@ class Service:
             
         # 超时处理
         if elapsed >= timeout:
-            _LOGGER.warning("[Service] 设备初始化超时，使用默认空列表继续")
+            _LOGGER.warning("[Service] 设备初始化超时，未获取到的设备将使用默认空列表继续")
             if self._rooms is None:
                 self._rooms = []
                 _LOGGER.warning("[Service] 房间信息初始化超时，使用空列表")
@@ -241,10 +247,9 @@ class Service:
             if self._bathrooms is None:
                 self._bathrooms = []
                 _LOGGER.warning("[Service] 浴室空调初始化超时，使用空列表")
-        
-        if self._hds is None:
-            self._hds = []
-            _LOGGER.info("[Service] HD设备列表初始化完成（空列表）")
+            if self._hds is None:
+                self._hds = []
+                _LOGGER.warning("[Service] HD设备初始化超时，使用空列表")
         
         # 安全地设置设备别名，添加空值检查
         try:
