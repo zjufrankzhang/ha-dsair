@@ -8,6 +8,7 @@
 
 * 空调
 * 空气传感器
+* 水热交换器（HD）
 
 # 不支持设备
 
@@ -20,27 +21,37 @@
 # 接入方法
 
 ## 安装
-- 方法一：将项目 `ds_air` 目录直接拷贝到 `/config/custom_components/` 目录下
 
-- 方法二：点击此按钮添加 HACS 自定义存储库 
+**方法一：通过 HACS 安装（推荐）**
 
-  [![Open your Home Assistant instance and open a repository inside the Home Assistant Community Store.](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=mypal&repository=ha-dsair&category=integration)
+由于本项目是基于原版的扩展分支，尚未被 HACS 官方默认收录，你需要先将其作为“自定义存储库”添加到 HACS 中。
 
-  然后点击右下角 DOWNLOAD 安装
+* **快捷添加**：点击下方按钮，可直接在你的 Home Assistant 中呼出添加界面：
+
+  [![Open your Home Assistant instance and open a repository inside the Home Assistant Community Store.](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=zjufrankzhang&repository=ha-dsair&category=integration)
+  
+  *(在弹出的界面确认添加后，点击右下角的 **DOWNLOAD** 进行安装)*
+
+* **手动添加**：如果上方按钮无效，请按照以下步骤操作：
+  1. 打开 Home Assistant 的 **HACS** 界面。
+  2. 点击右上角的三个点 `⋮`，选择 **自定义存储库 (Custom repositories)**。
+  3. 在“存储库” URL 处填写：`https://github.com/zjufrankzhang/ha-dsair`
+  4. “类别”选择：**集成 (Integration)**，然后点击“添加”。
+  5. 关闭弹窗，在 HACS 中搜索 `DS-AIR`，点击进入并下载安装。
+
+**方法二：手动安装**
+
+下载本项目的代码压缩包，将其中的 `ds_air` 目录完整解压并拷贝到你 Home Assistant 的 `/config/custom_components/` 目录下（最终路径应为 `/config/custom_components/ds_air`）。安装完成后，请重启 Home Assistant。
 
 ## 配置 
     
 - 方法一：在`配置-集成-添加集成`中选择`DS-AIR`
 
-- 方法二：直接点击此按钮 [![Open your Home Assistant instance and start setting up a new integration.](https://my.home-assistant.io/badges/config_flow_start.svg)](https://my.home-assistant.io/redirect/config_flow_start/?domain=ds_air)
+- 方法二：首先直接点击此按钮 [![Open your Home Assistant instance and start setting up a new integration.](https://my.home-assistant.io/badges/config_flow_start.svg)](https://my.home-assistant.io/redirect/config_flow_start/?domain=ds_air)
 
 然后依次填入网关IP、端口号、设备型号提交即可
 
-# 开发过程
-
-本组件开发过程可在[blog](https://www.mypal.wang/blog/lun-yi-ci-jia-yong-kong-diao-jie-ru-hazhe-teng-jing-li/)查看
-
-# HD支持
+# HD支持信息
 
 在最新版中，增加了HD实体的支持，目前在我的DTA117C611上工作正常。
 
